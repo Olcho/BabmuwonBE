@@ -55,6 +55,16 @@ ZIP의 dist·기존 README·배치 스크립트는 배포하지 않았습니다.
 
 최초 구현에서는 v0.3의 30초 가정값을 공통으로 사용했습니다. 후속 MVP 보완에서 사용자 요청에 따라 Router 30초와 Search Agent 60초로 분리했습니다. 제한을 넘으면 타임아웃을 반환하고 FE는 로컬 대체 문구를 사용합니다.
 
+## Search Agent SSE 오류 조사
+
+사용자는 같은 로컬 키로 Search Agent를 직접 호출했을 때 HTTP 200과 `text/event-stream;charset=UTF-8`, 파싱 가능한 JSON 이벤트 40개, `text-delta`, `finish`, `[DONE]`을 확인했습니다. Relay에서는 502 `LINER_INVALID_RESPONSE`를 받았습니다. 기존 코드에서 해당 Content-Type과 보고된 네 가지 추가 이벤트 이름 자체는 유효했습니다. JSON 파싱과 종료 마커 존재만으로 `data.references`가 배열인지, `delta`가 문자열인지, 종료 순서와 답변 길이가 유효한지는 확인할 수 없습니다. 실제 502를 낸 필드는 확인되지 않았습니다.
+
+정상 이벤트를 담은 단독 CR 스트림이 기존 코드에서 `LINER_INCOMPLETE_STREAM`으로 실패하는 프레임 처리 결함을 재현했습니다. 수정한 파서는 표준 줄바꿈을 모두 처리하고, 검색 메타데이터는 무시하며, 문서에 나온 중첩 출처 배열과 문자열 조각 검증을 유지합니다. 누락·빈 제목은 호스트명으로 대체하고, 사용할 수 없는 출처 URL은 제외합니다. 오류 이벤트 또는 완결되지 않은 스트림은 전체 응답을 거부합니다. [Liner Search Agent 문서](https://liner.com/developers/docs/search-agent-api), [SSE 프레임 표준](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream)
+
+사용자 환경에서 재현되면 인증된 로컬 `GET /audit`의 해당 Search 요청에서 `endpoint`, `status`, `diagnostic`만 확인하면 거부 지점을 좁힐 수 있습니다. 진단은 고정 코드이며 검색어, 원본 이벤트, 출처 값, API 키를 포함하지 않습니다.
+
+후속 사용자 관측으로 실제 502 원인을 확인했습니다. `data-search-references`가 먼저 `{isScholarlyQuery: …}` 메타데이터만 보내고, 다음 이벤트에서 `{references: […], relatedImages: …}`를 보냈습니다. 첫 이벤트에 배열을 요구하던 검사가 `references_array`를 반환했습니다. 이제 `references` 필드가 없고 `isScholarlyQuery`만 있는 객체는 무시합니다. 메타데이터 값은 해석하지 않으며, `references`가 제공되면 여전히 배열이어야 합니다. 빈 객체나 다른 필드만 있는 객체는 계속 거부합니다. 관측된 두 이벤트의 연속 입력은 수정 전 실패, 수정 후 통과를 확인했습니다. 실계정 호출 없이 합성 응답으로 검증했으며 실계정 재검증은 남아 있습니다.
+
 ## 메뉴명 검증 정책 변경과 잔여 위험
 
 최신 요청에 따라 Relay의 메뉴 허용목록과 메뉴 내용의 개인정보 정규식 검사를 제거했습니다. `GET /catalog`의 `foods`는 기존 응답 호환을 위한 예시입니다. 현재 Relay는 자료형·빈 값·원문 최대 200자만 검사하며 내용을 표준화하지 않습니다. 백엔드가 기존 구조화된 필드로 프롬프트를 구성하고 메뉴 값을 JSON으로 인용합니다.

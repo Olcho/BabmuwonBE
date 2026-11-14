@@ -113,6 +113,25 @@ test('auth, origin, host, content type, malformed/oversized JSON, prototype keys
   } finally {await h.close();}
 });
 
+test('Search failures keep the public error code and log only a fixed diagnostic', async () => {
+  const fixture = 'fixture-private-value';
+  const h = await harness({fetcher:async () => new Response(
+    'data: '+JSON.stringify({type:'data-search-references',data:{references:fixture}})+'\n\n',
+    {headers:{'content-type':'text/event-stream;charset=UTF-8'}},
+  )}, {linerMode:'live', linerKey:fixture});
+  try {
+    const response = await h.post('/ai/nutrition',{topicId:'balanced_meals'});
+    assert.equal(response.status,502);
+    assert.deepEqual(await response.json(),{error:'LINER_INVALID_RESPONSE'});
+    const {events} = await (await h.get('/audit')).json();
+    assert.equal(events[0].endpoint,'/ai/nutrition');
+    assert.equal(events[0].diagnostic,'references_array');
+    assert.ok(!JSON.stringify(events).includes(fixture));
+  } finally {
+    await h.close();
+  }
+});
+
 test('strict schema: invalid months, numeric types, suppressed zero, duplicate identifiers',async()=>{
   const h=await harness();
   try {

@@ -10,50 +10,96 @@ export interface AIResult {
   text:string; citations:{title:string;url:string}[]; simulated:boolean; cached:boolean;
   reviewRequired:true; sourceMissing:boolean; source:'mock'|'router'|'search';
 }
-function citations(value:unknown):AIResult['citations'] {
-  if(value===undefined)return [];
-  if(!Array.isArray(value))throw new ApiError(502,'LINER_INVALID_RESPONSE');
-  return value.flatMap(item=>{
-    if(!item || typeof item!=='object')return [];
+function citations(refs:readonly unknown[]):AIResult['citations'] {
+  return refs.flatMap(item=>{
+    if(!item || typeof item!=='object' || Array.isArray(item))return [];
     const r=item as Record<string,unknown>;
     if(typeof r.url!=='string')return [];
     try {
       const url=new URL(r.url);
       if(!['http:','https:'].includes(url.protocol) || url.username || url.password)return [];
-      return [{title:typeof r.title==='string' ? r.title.slice(0,300):url.hostname,url:url.href}];
+      const title = typeof r.title === 'string' && r.title.trim() ? r.title.slice(0,300) : url.hostname;
+      return [{title,url:url.href}];
     } catch {return [];}
   }).slice(0,20);
 }
-function result(text:unknown,refs:unknown,source:AIResult['source']):AIResult {
-  if(typeof text!=='string' || !text.trim() || text.length>20000)throw new ApiError(502,'LINER_INVALID_RESPONSE');
+const maxAnswerLength = 20_000;
+function result(text:unknown,refs:readonly unknown[],source:AIResult['source']):AIResult {
+  if(typeof text!=='string' || !text.trim() || text.length>maxAnswerLength)throw new ApiError(502,'LINER_INVALID_RESPONSE');
   const list=citations(refs);
   return {text,citations:list,source,simulated:source==='mock',cached:false,reviewRequired:true,sourceMissing:list.length===0};
 }
-// Parse the documented SSE envelope, not merely HTTP 200 / [DONE].
-// Partial text is discarded on any error or missing terminal markers.
-export function parseSearchSse(text:string):AIResult {
-  let answer='', finished=false, done=false;
-  const refs:unknown[]=[];
-  for(const frame of text.replace(/\r\n/g,'\n').split('\n\n')) {
-    const data=frame.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
-    if(!data)continue;
-    if(done)throw new ApiError(502,'LINER_INVALID_RESPONSE');
-    if(data==='[DONE]'){done=true;continue;}
-    const event=record(parseJson(data));
-    if(event.type==='data-error' || event.type==='error' || event.error)throw new ApiError(502,'LINER_STREAM_ERROR');
-    if(event.type==='text-delta') {
-      if(finished || typeof event.delta!=='string')throw new ApiError(502,'LINER_INVALID_RESPONSE');
-      answer+=event.delta;
-    }
-    if(event.type==='data-search-references') {
-      const references=record(event.data).references;
-      if(!Array.isArray(references))throw new ApiError(502,'LINER_INVALID_RESPONSE');
-      refs.push(...references);
-    }
-    if(event.type==='finish')finished=true;
+type SearchDiagnostic = 'content_type' | 'event_json' | 'event_object' | 'upstream_error'
+  | 'references_data' | 'references_array' | 'delta_type' | 'delta_after_finish'
+  | 'data_after_done' | 'missing_finish' | 'missing_done' | 'truncated_frame'
+  | 'empty_answer' | 'answer_too_long';
+
+export class LinerSearchError extends ApiError {
+  constructor(code: string, public readonly diagnostic: SearchDiagnostic) {
+    super(502, code);
   }
-  if(!done || !finished)throw new ApiError(502,'LINER_INCOMPLETE_STREAM');
-  return result(answer,refs,'search');
+}
+
+const searchInvalid = (diagnostic: SearchDiagnostic) => new LinerSearchError('LINER_INVALID_RESPONSE', diagnostic);
+const searchIncomplete = (diagnostic: SearchDiagnostic) => new LinerSearchError('LINER_INCOMPLETE_STREAM', diagnostic);
+const streamError = () => new LinerSearchError('LINER_STREAM_ERROR', 'upstream_error');
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+export function parseSearchSse(text:string):AIResult {
+  let answer = '', finished = false, done = false;
+  const refs: unknown[] = [];
+  // SSE accepts CRLF, LF and CR, and dispatches data only after a blank line.
+  const frames = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n\n');
+  const pendingFrame = frames.pop();
+  for (const frame of frames) {
+    const lines = frame.split('\n');
+    const data = lines.filter(line => line === 'data' || line.startsWith('data:'))
+      .map(line => line.slice(5).replace(/^ /, '')).join('\n');
+    if (lines.filter(line => line.startsWith('event:')).at(-1)?.slice(6).replace(/^ /, '') === 'error') throw streamError();
+    if (!data) continue;
+    if (done) throw searchInvalid('data_after_done');
+    if (data === '[DONE]') {
+      if (!finished) throw searchIncomplete('missing_finish');
+      done = true;
+      continue;
+    }
+    let event: unknown;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      throw new LinerSearchError('UPSTREAM_INVALID_RESPONSE', 'event_json');
+    }
+    if (!isRecord(event)) throw new LinerSearchError('UPSTREAM_INVALID_RESPONSE', 'event_object');
+    if (event.type === 'data-error' || event.type === 'error' || event.error) throw streamError();
+    switch (event.type) {
+      case 'text-delta':
+        if (finished) throw searchInvalid('delta_after_finish');
+        if (typeof event.delta !== 'string') throw searchInvalid('delta_type');
+        answer += event.delta;
+        break;
+      case 'data-search-references':
+        if (!isRecord(event.data)) throw new LinerSearchError('UPSTREAM_INVALID_RESPONSE', 'references_data');
+        // Observed metadata-only event precedes the actual references event.
+        if (!Object.hasOwn(event.data, 'references') && Object.keys(event.data).length === 1
+          && Object.hasOwn(event.data, 'isScholarlyQuery')) break;
+        if (!Array.isArray(event.data.references)) throw searchInvalid('references_array');
+        for (const reference of event.data.references) refs.push(reference);
+        break;
+      case 'finish':
+        finished = true;
+        break;
+      // Other events carry metadata that the Relay does not use.
+    }
+  }
+  if (pendingFrame?.split('\n').some(line => line === 'data' || line.startsWith('data:'))) {
+    throw searchIncomplete('truncated_frame');
+  }
+  if (!finished) throw searchIncomplete('missing_finish');
+  if (!done) throw searchIncomplete('missing_done');
+  if (!answer.trim()) throw searchInvalid('empty_answer');
+  if (answer.length > maxAnswerLength) throw searchInvalid('answer_too_long');
+  return result(answer, refs, 'search');
 }
 export class LinerService {
   private limiter=new LinerLimiter();
@@ -87,7 +133,9 @@ export class LinerService {
     if(this.cfg.linerMode==='mock')return result('[모의 검색] 실제 근거와 출처가 없습니다. 연결 후 다시 검색하고 원재료와 출처를 확인하세요.',[],'mock');
     const response=await this.call('/api/v1/agents/search',
       {messages:[{role:'user',content:query}],lang:'ko',mode:'general',stream:true}, this.cfg.linerSearchTimeoutMs);
-    if(!response.contentType.toLowerCase().includes('text/event-stream'))throw new ApiError(502,'LINER_INVALID_RESPONSE');
+    if (response.contentType.split(';', 1)[0].trim().toLowerCase() !== 'text/event-stream') {
+      throw searchInvalid('content_type');
+    }
     return parseSearchSse(response.text);
   }
   s2News(input:NewsInput):Promise<AIResult> {

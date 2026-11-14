@@ -7,7 +7,7 @@ import { authorize,cors,jsonBody,reply } from './lib/http.js';
 import { AuditStore } from './lib/audit.js';
 import { MAX_SEND_RETRIES,StateStore,type RecipientState } from './lib/state.js';
 import { validateEvidence,validateNews,validateNutrition,validateS5,validateSend,validateDocument,topicMap,type SendInput } from './lib/validation.js';
-import { LinerService } from './providers/liner.js';
+import { LinerSearchError,LinerService } from './providers/liner.js';
 import { ChannelService,type ChannelProvider } from './providers/channel.js';
 import type { Fetch } from './lib/upstream.js';
 
@@ -158,7 +158,7 @@ export function createApp(config:Config,dependencies:AppDependencies={}) {
       reply(res,status,output);
     } catch(err) {
       const e=err instanceof ApiError?err:new ApiError(500,'INTERNAL_ERROR');
-      audit.add(endpoint,e.code,Date.now()-start,e.status);
+      audit.add(endpoint,e.code,Date.now()-start,e.status,e instanceof LinerSearchError ? e.diagnostic : undefined);
       if(!res.headersSent)reply(res,e.status,{error:e.code});else res.end();
     }
   });
