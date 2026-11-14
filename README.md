@@ -89,6 +89,7 @@ Liner는 `LINER_MODE=live`, `LINER_API_KEY`로 별도 설정합니다. Channel T
 ## 검증 및 기준
 
 - `npm run build`, `npm run check`, `npm test`, 실제 시작/Mock 연동 결과: [검증 기록](docs/VALIDATION.md)
+- Liner 프롬프트 비교 실행법과 영양사 검토 항목: [AI 초안 품질 검증](docs/LINER_QUALITY.md)
 - ZIP 재사용 판단·Figma 충돌·공식 API 출처: [구현 근거](docs/IMPLEMENTATION_NOTES.md)
 - 작업: [GitHub 이슈 #1](https://github.com/Olcho/BabmuwonBE/issues/1), 브랜치 `codex/relay-foundation`
 - FE 저장소·Figma 수정, 외부 배포, main 머지는 이 작업에 포함하지 않습니다.
