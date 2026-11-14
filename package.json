@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "dev": "npm run build && npm start",
-    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js tools/liner-quality.test.mjs",
+    "quality:liner": "npm run build && node tools/liner-quality.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "smoke": "npm run build && node tools/smoke.mjs"
   },
