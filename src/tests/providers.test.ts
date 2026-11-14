@@ -84,11 +84,14 @@ test('upstream 401/429/500, malformed/oversize response and network errors are s
   await rejectsCode(new LinerService(live(),async()=>new Response('x'.repeat(1024*1024+1))).s2News({month:'2026-12',menus:['귤']}),'UPSTREAM_RESPONSE_TOO_LARGE');
 });
 
-test('deadline covers upstream connection and aborts without exposing payload',async()=>{
+test('Search has its own deadline and aborts without exposing payload', {timeout:1500}, async()=>{
   const fetcher:Fetch=async(_url,init)=>new Promise((_resolve,reject)=>{
     init?.signal?.addEventListener('abort',()=>reject(new Error('PRIVATE timeout payload')),{once:true});
   });
-  const provider=new LinerService({...live(),upstreamTimeoutMs:20},fetcher);
+  const config = live();
+  assert.equal(config.linerRouterTimeoutMs, 30_000);
+  assert.equal(config.linerSearchTimeoutMs, 60_000);
+  const provider=new LinerService({...config,linerSearchTimeoutMs:20},fetcher);
   await rejectsCode(provider.nutrition({topicId:'balanced_meals'}),'LINER_TIMEOUT');
 });
 
@@ -131,9 +134,9 @@ test('one Liner limiter serializes reservations at less than two calls per secon
   const cache=new SimpleCache();cache.set('expired','value',-1);assert.equal(cache.get('expired'),undefined);
 });
 
-test('a queued Liner call expires before a later slot opens and makes no upstream request', async () => {
+test('a queued Router call expires before a later slot opens and makes no upstream request', async () => {
   let calls = 0;
-  const provider = new LinerService({...live(), upstreamTimeoutMs:100}, async () => {
+  const provider = new LinerService({...live(), linerRouterTimeoutMs:100}, async () => {
     calls++;
     return json({choices:[{message:{content:'초안'},finish_reason:'stop'}]});
   });

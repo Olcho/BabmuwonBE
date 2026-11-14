@@ -1,18 +1,9 @@
 import { blocked, invalid } from './errors.js';
-import { publicFoods } from './catalog.js';
 
 export type ObjectValue = Record<string, unknown>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const monthRe = /^20\d{2}-(0[1-9]|1[0-2])$/;
 const phoneRe = /^010\d{8}$/;
-const forbiddenPatterns = [
-  /(?:01[016789])[-\s]?\d{3,4}[-\s]?\d{4}/,
-  /(?:\d{1,2})\s*학년|(?:\d{1,2})\s*반|\d{1,2}-\d{1,2}-\d{1,2}/,
-  /[가-힣]{1,8}[-_][0-9]{2}\b/,
-  /(?:초등학교|중학교|고등학교|학교명|학생명|학부모님|주민등록)/,
-  /\[(?:학생|학교|학반)[^\]]*\]/,
-  /@|https?:\/\//i
-];
 function obj(v: unknown, expectedKeys: string[], requiredKeys = expectedKeys): ObjectValue {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw invalid();
   const o = v as ObjectValue;
@@ -24,15 +15,12 @@ function str(v: unknown, min = 1, max = 50): string {
   if (typeof v !== 'string' || v.trim().length < min || v.length > max) throw invalid();
   return v.trim();
 }
-function publicFood(v: unknown, catalog: readonly string[]): string {
-  const s = str(v, 1, 40);
-  if (!/^[가-힣a-zA-Z0-9\s()·.,+\-\/]+$/.test(s)) throw blocked();
-  if (forbiddenPatterns.some(p=>p.test(s))) throw blocked();
-  if (!catalog.includes(s)) throw blocked();
-  return s;
-}
 function month(v: unknown): string {
   const s = str(v, 7, 7); if (!monthRe.test(s)) throw invalid(); return s;
+}
+function menuName(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || [...value].length > 200) throw invalid();
+  return value;
 }
 export const topicMap: Record<string, string> = {
   balanced_meals: '학교급식 균형 잡힌 식사와 식생활 실천',
@@ -49,19 +37,19 @@ export type S5Input = {counts:{byAllergen:{allergenNo:number;students:SafeCount}
 export type Recipient = {memberId:string;phone:string};
 export type SendInput = {batchKey:string;month:string;docVersion:number;templateCode:string;recipients:Recipient[]};
 
-export function validateNews(v:unknown, catalog:readonly string[]=publicFoods):NewsInput {
+export function validateNews(v:unknown):NewsInput {
   const o=obj(v,['month','menus']);
   if (!Array.isArray(o.menus) || o.menus.length < 1 || o.menus.length > 3) throw invalid();
-  return {month:month(o.month),menus:o.menus.map(v=>publicFood(v,catalog))};
+  return {month:month(o.month),menus:o.menus.map(menuName)};
 }
 export function validateNutrition(v:unknown):NutritionInput {
   const o=obj(v,['topicId']);const topicId=str(o.topicId);
   if (!Object.hasOwn(topicMap,topicId)) throw invalid();return {topicId};
 }
-export function validateEvidence(v:unknown, catalog:readonly string[]=publicFoods):EvidenceInput {
+export function validateEvidence(v:unknown):EvidenceInput {
   const o=obj(v,['allergenNo','foodName']);const allergenNo=o.allergenNo;
   if (typeof allergenNo!=='number' || !Number.isInteger(allergenNo) || allergenNo<1 || allergenNo>19) throw invalid();
-  return {allergenNo,foodName:publicFood(o.foodName,catalog)};
+  return {allergenNo,foodName:menuName(o.foodName)};
 }
 function safeCount(v:unknown):SafeCount {
   if (v==='3명 미만') return v;

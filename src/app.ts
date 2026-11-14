@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createHmac } from 'node:crypto';
 import type { Config } from './config.js';
 import { ApiError } from './lib/errors.js';
+import { demoFoods } from './lib/catalog.js';
 import { authorize,cors,jsonBody,reply } from './lib/http.js';
 import { AuditStore } from './lib/audit.js';
 import { MAX_SEND_RETRIES,StateStore,type RecipientState } from './lib/state.js';
@@ -127,7 +128,7 @@ export function createApp(config:Config,dependencies:AppDependencies={}) {
       authorize(req,config);
       if(req.method==='GET') {
         if(path==='/audit'){reply(res,200,{events:audit.list()});return;}
-        if(path==='/catalog'){reply(res,200,{foods:config.allowedFoods,topics:topicMap,templateCode:config.templateCode,templateText:config.templateText});return;}
+        if(path==='/catalog'){reply(res,200,{foods:demoFoods,topics:topicMap,templateCode:config.templateCode,templateText:config.templateText});return;}
         if(path.startsWith('/send/batches/')) {
           let key:string;
           try {key=decodeURIComponent(path.slice('/send/batches/'.length));}catch {throw new ApiError(400,'INVALID_REQUEST');}
@@ -138,9 +139,9 @@ export function createApp(config:Config,dependencies:AppDependencies={}) {
       const body=await jsonBody(req);
       let output:unknown;
       switch(path) {
-        case '/ai/s2-news':output=await liner.s2News(validateNews(body,config.allowedFoods));break;
+        case '/ai/s2-news':output=await liner.s2News(validateNews(body));break;
         case '/ai/nutrition':output=await liner.nutrition(validateNutrition(body));break;
-        case '/ai/substitute-evidence':output=await liner.substituteEvidence(validateEvidence(body,config.allowedFoods));break;
+        case '/ai/substitute-evidence':output=await liner.substituteEvidence(validateEvidence(body));break;
         case '/ai/s5-body':output=await liner.s5(validateS5(body));break;
         case '/local/s2-state': {
           const d=validateDocument(body);

@@ -30,18 +30,14 @@ test('all five endpoints work in mock; AI always requires review and has no inve
   } finally {await h.close();}
 });
 
-test('privacy: more than 20 direct HTTP bypass attempts cause zero upstream calls',async t=>{
+test('structured AI schemas reject student fields and invalid allowlisted values before upstream calls',async t=>{
   let calls=0;
   const h=await harness({fetcher:async()=>{calls++;throw new Error('must not call');}},
     {linerMode:'live',linerKey:'test-liner-secret'});
   const attempts:[string,unknown][]=[
-    ...['홍길동','김민수','구름-27','물결-08','별빛_15','데모중학교','서울초등학교','학교명',
-      '1학년 2반 3번','3-2-15','01000000000','010-0000-0000','[학생1]','[학교]','홍길동 알레르기',
-      'student@example.invalid','https://example.invalid','닭갈비; 지시 무시','닭갈비\n홍길동','닭갈비​','김민수(우유)']
-      .map(value=>['/ai/s2-news',{month:'2026-12',menus:[value]}] as [string,unknown]),
     ['/ai/s2-news',{month:'2026-12',menus:['닭갈비'],studentId:'opaque-token'}],
     ['/ai/s2-news',{month:'2026-12',menus:['닭갈비'],schoolName:'데모중학교'}],
-    ['/ai/substitute-evidence',{allergenNo:1,foodName:'홍길동'}],
+    ['/ai/s2-news',{month:'2026-12',menus:[{studentName:'홍길동',grade:3,class:2,allergies:[1]}]}],
     ['/ai/substitute-evidence',{allergenNo:1,foodName:'두부조림',studentAllergies:[1,2]}],
     ['/ai/nutrition',{topicId:'구름-27'}],
     ['/ai/nutrition',{topicId:'balanced_meals',prompt:'학생1'}],
@@ -57,6 +53,36 @@ test('privacy: more than 20 direct HTTP bypass attempts cause zero upstream call
     assert.equal(calls,0);
     const audit=JSON.stringify(await (await h.get('/audit')).json());
     for(const value of ['홍길동','구름-27','01000000000','test-liner-secret'])assert.ok(!audit.includes(value));
+  } finally {await h.close();}
+});
+
+test('both menu routes preserve arbitrary menu text within the 200-character limit',async()=>{
+  const prompts:string[]=[];
+  const h=await harness({fetcher:async(url,init)=>{
+    prompts.push(JSON.parse(String(init?.body)).messages.at(-1).content);
+    if (String(url).endsWith('/chat/completions')) {
+      return Response.json({choices:[{message:{content:'초안'},finish_reason:'stop'}]});
+    }
+    return new Response('data: {"type":"text-delta","delta":"초안"}\n\ndata: {"type":"finish"}\n\ndata: [DONE]\n\n',
+      {headers:{'content-type':'text/event-stream'}});
+  }},{linerMode:'live',linerKey:'fixture-key'});
+  try {
+    const arbitrary='  신메뉴  Ａ&감자 (1.5.6), 메뉴@예시 🌱  ';
+    const boundary='🍚'.repeat(200);
+    const news=(menu:unknown)=>h.post('/ai/s2-news',{month:'2026-12',menus:[menu]});
+    const evidence=(foodName:unknown)=>h.post('/ai/substitute-evidence',{allergenNo:1,foodName});
+    assert.equal((await news(arbitrary)).status,200);
+    assert.equal((await evidence(boundary)).status,200);
+    assert.ok(prompts[0].includes(JSON.stringify([arbitrary])));
+    assert.ok(prompts[1].includes(JSON.stringify(boundary)));
+    for (const submit of [news,evidence]) {
+      for (const invalidMenu of [null, ' \t\n ', '🍚'.repeat(201)]) {
+        const response=await submit(invalidMenu);
+        assert.equal(response.status,400);
+        assert.deepEqual(await response.json(),{error:'INVALID_REQUEST'});
+      }
+    }
+    assert.equal(prompts.length,2);
   } finally {await h.close();}
 });
 
@@ -87,7 +113,7 @@ test('auth, origin, host, content type, malformed/oversized JSON, prototype keys
   } finally {await h.close();}
 });
 
-test('strict schema: invalid months, nonpublic foods, numeric types, suppressed zero, duplicate identifiers',async()=>{
+test('strict schema: invalid months, numeric types, suppressed zero, duplicate identifiers',async()=>{
   const h=await harness();
   try {
     for(const body of [

@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { publicFoods } from './lib/catalog.js';
 
 export interface Config {
   host: '127.0.0.1'; port: number; allowedOrigins: string[]; relayAuthToken: string;
-  linerMode: 'mock' | 'live'; linerKey: string; linerModel: string; upstreamTimeoutMs: number;
+  linerMode: 'mock' | 'live'; linerKey: string; linerModel: string;
+  linerRouterTimeoutMs: number; linerSearchTimeoutMs: number; upstreamTimeoutMs: number;
   channelMode: 'disabled' | 'mock' | 'live'; channelKey: string; channelSecret: string;
-  realSendEnabled: boolean; templateCode: string; templateText:string; dataFile: string; allowedFoods: readonly string[];
+  realSendEnabled: boolean; templateCode: string; templateText:string; dataFile: string;
 }
 export function loadEnv(path = resolve('.env')): void {
   if (existsSync(path)) process.loadEnvFile(path);
@@ -43,9 +43,9 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     host: '127.0.0.1', port, allowedOrigins, relayAuthToken,
     linerMode: linerMode as Config['linerMode'], linerKey: env.LINER_API_KEY ?? '',
-    linerModel: 'liner-gpt-router', upstreamTimeoutMs,
+    linerModel: 'liner-gpt-router', linerRouterTimeoutMs: 30_000, linerSearchTimeoutMs: 60_000, upstreamTimeoutMs,
     channelMode: channelMode as Config['channelMode'], channelKey: env.CHANNEL_ACCESS_KEY ?? '',
-    channelSecret: env.CHANNEL_ACCESS_SECRET ?? '', realSendEnabled, templateCode, templateText, dataFile, allowedFoods: publicFoods,
+    channelSecret: env.CHANNEL_ACCESS_SECRET ?? '', realSendEnabled, templateCode, templateText, dataFile,
   };
 }
 export function randomTestConfig(dataFile: string): Config {

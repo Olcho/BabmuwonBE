@@ -18,7 +18,7 @@
 {"status":"ok","service":"mawd-relay","linerMode":"mock","channelMode":"mock","localOnly":true}
 ```
 
-`GET /catalog` (200, 인증 필요): `foods:string[]`, `topics:{topicId:설명}`, `templateCode:string`, `templateText:string`. `#{월}`만 치환하여 미리보기합니다. 학교명은 템플릿 고정값, 버튼 URL은 채널톡 캠페인 고정값입니다. 이 응답이 템플릿 검수나 실제 캠페인 일치를 보증하지는 않습니다.
+`GET /catalog` (200, 인증 필요): `foods:string[]`(기존 데모 메뉴 예시), `topics:{topicId:설명}`, `templateCode:string`, `templateText:string`. FE의 메뉴 선택은 실제 로컬 식단·후보를 기준으로 합니다. `#{월}`만 치환하여 미리보기합니다. 학교명은 템플릿 고정값, 버튼 URL은 채널톡 캠페인 고정값입니다. 이 응답이 템플릿 검수나 실제 캠페인 일치를 보증하지는 않습니다.
 
 ## AI 요청
 
@@ -28,7 +28,9 @@
 | /ai/nutrition | `{"topicId":"balanced_meals"}` |
 | /ai/substitute-evidence | `{"allergenNo":1,"foodName":"두부조림"}` |
 
-`month`는 YYYY-MM, 연도 2000~2099. 메뉴는 1~3개, 식품은 서버 공개 목록과 정확히 일치해야 합니다. 별도의 prompt·학교명·학생명·가명·학생별 번호·알레르기 배열을 넣지 않습니다. 근거 API는 **일반 식품 근거용**이며 학생의 대체식 안전성을 판정하지 않습니다.
+`month`는 YYYY-MM, 연도 2000~2099입니다. `menus`는 1~3개입니다. `menus[]`와 `foodName`의 각 값은 앞뒤 공백을 제외했을 때 비어 있지 않은 문자열이어야 합니다. 공백을 포함한 원문은 Unicode 코드 포인트 기준 최대 200자입니다. 위반 시 400 `INVALID_REQUEST`를 반환합니다. 공백, 특수문자, 괄호, 알레르기 번호 등 메뉴 표기는 그대로 프롬프트 데이터에 포함됩니다.
+
+FE는 식단·일반 식품 후보의 이름 필드만 읽고 학생 이름·학년·반·개인 알레르기와 별도로 유지합니다. 개인정보가 메뉴 문자열에 섞이면 Relay가 검출하지 못하므로 FE의 기존 로컬 검사를 유지해야 합니다. 별도의 prompt나 학생 관련 필드는 스키마에서 거부합니다. `allergenNo`는 학생과 연결되지 않은 일반 항목 번호 1~19입니다.
 
 nutrition 주제: `balanced_meals`, `seasonal_foods`, `food_allergy_basics`, `winter_nutrition`, `food_waste`.
 
@@ -203,4 +205,4 @@ upsert 실패만 재시도합니다. 이벤트 전송 실패는 HTTP 오류라�
 | 504 | LINER_TIMEOUT |
 | 500 | INTERNAL_ERROR: 본문/오류 상세를 수집하지 말고 상태 확인 |
 
-기본 외부 호출 제한은 30초입니다. Liner는 호출 대기 시간도 이 제한에 포함하며, 대기 중 만료된 요청은 504 `LINER_TIMEOUT`을 반환합니다. 알림톡은 최대 10명에 대해 upsert/event를 순차 실행하므로 전체 HTTP 요청은 더 오래 걸릴 수 있습니다. FE는 발송 대기를 충분히 두고 응답이 끊기면 배치 조회로 복구하세요. 외부 계정 동작은 실계정 확인 전까지 미검증입니다.
+Liner 제한은 Router 30초(`/ai/s2-news`, `/ai/s5-body`), Search Agent 60초(`/ai/nutrition`, `/ai/substitute-evidence`)입니다. 두 제한 모두 호출 대기와 응답 읽기를 포함합니다. 만료 시 504 `LINER_TIMEOUT`을 반환합니다. Search Agent의 FE 대기 시간은 60초보다 여유 있게 설정하세요. 채널톡의 호출당 기본 제한은 30초이고 최대 10명에 대해 upsert/event를 순차 실행하므로 전체 HTTP 요청은 더 오래 걸릴 수 있습니다. 발송 응답이 끊기면 배치 조회로 복구하세요.
