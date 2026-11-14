@@ -80,6 +80,9 @@ export function parseSearchSse(text:string):AIResult {
         break;
       case 'data-search-references':
         if (!isRecord(event.data)) throw new LinerSearchError('UPSTREAM_INVALID_RESPONSE', 'references_data');
+        // Observed metadata-only event precedes the actual references event.
+        if (!Object.hasOwn(event.data, 'references') && Object.keys(event.data).length === 1
+          && Object.hasOwn(event.data, 'isScholarlyQuery')) break;
         if (!Array.isArray(event.data.references)) throw searchInvalid('references_array');
         for (const reference of event.data.references) refs.push(reference);
         break;

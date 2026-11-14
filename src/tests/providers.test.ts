@@ -88,6 +88,35 @@ test('Search accepts CR framing and ignores extra events observed in live Search
   assert.deepEqual(result.citations,[{title:'example.invalid',url:'https://example.invalid/reference'}]);
 });
 
+test('Search accepts observed scholarly metadata followed by reference results', () => {
+  for (const isScholarlyQuery of [false, true]) {
+    const result = parseSearchSse(sse([
+      {type:'data-search-references',data:{isScholarlyQuery}},
+      {type:'data-search-references',data:{references:[
+        {title:'Fixture reference',url:'https://example.invalid/reference'},
+      ],relatedImages:[]}},
+      {type:'text-delta',delta:'검토할 초안'},
+      {type:'finish'},
+    ]));
+    assert.equal(result.text,'검토할 초안');
+    assert.deepEqual(result.citations,[{title:'Fixture reference',url:'https://example.invalid/reference'}]);
+    assert.equal(result.sourceMissing,false);
+  }
+});
+
+test('Search metadata exception does not bypass reference validation', () => {
+  for (const data of [
+    {}, {relatedImages:[]}, {isScholarlyQuery:false,unexpected:true},
+    ...[null, {}, 'invalid', 1].map(references => ({isScholarlyQuery:false,references})),
+  ]) {
+    assert.throws(() => parseSearchSse(sse([
+      {type:'data-search-references',data},
+      {type:'text-delta',delta:'fixture'}, {type:'finish'},
+    ])), error => error instanceof LinerSearchError
+      && error.code === 'LINER_INVALID_RESPONSE' && error.diagnostic === 'references_array');
+  }
+});
+
 test('Search reports distinct reasons while rejecting bad fields and truncated frames', () => {
   const answer = {type:'text-delta',delta:'fixture'};
   const finish = {type:'finish'};

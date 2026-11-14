@@ -11,7 +11,7 @@
 | npm install --ignore-scripts | 개발 의존성 3개 설치, 당시 audit 0 vulnerabilities |
 | npm run check | TypeScript noEmit 통과 |
 | npm run build | TypeScript 컴파일 통과 |
-| npm test | **50 tests, 50 pass, 0 fail, 0 skipped** |
+| npm test | **52 tests, 52 pass, 0 fail, 0 skipped** |
 | node tools/smoke.mjs | 빌드 후 실제 server 진입점 시작 및 HTTP Mock 검사 통과 |
 | git diff --check | 공백 오류 없음 |
 
@@ -32,6 +32,7 @@
 - 전화번호 원문/로컬 토큰 미저장, 공개 상태에 HMAC 없음, 감사 로그에 민감 본문 없음.
 - Liner 요청 경로/헤더/모델/필드, UTF-8 청크 경계·SSE CRLF·댓글·출처, HTTP 200 data-error, 스트림 잘림, 오류 JSON·401·429·500·오프라인·타임아웃·초대형 응답.
 - Search SSE의 단독 CR 줄바꿈과 추가 메타데이터 이벤트, 빈 출처 제목의 호스트명 대체, 출처 배열·delta 타입 오류, 불완전한 종료, 본문 없는 감사 진단.
+- 관측된 `isScholarlyQuery` 전용 이벤트 다음에 출처 배열 이벤트가 오는 경우 정상 처리. 이 예외가 잘못된 출처 자료형이나 알 수 없는 출처 객체를 허용하지 않는지 검증.
 - AI 캐시/동시 질의 병합, 초당 2회 미만 호출 시작, 오류 미캐시, 비밀정보 echo 차단.
 - Liner 대기열 만료 시 공급자 호출 없이 504 반환, JSON에서 이스케이프되는 자격 증명의 응답 본문·인용 제목 노출 차단.
 - Router 30초·Search Agent 60초 기본값과 각 경로의 만료 처리를 짧은 주입 값으로 확인.
