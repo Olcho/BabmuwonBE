@@ -190,6 +190,8 @@ upsert 실패만 재시도합니다. 이벤트 전송 실패는 HTTP 오류라�
 
 `GET /audit` (인증 필요)는 최신 100건의 `events:[{at,endpoint,status,statusCode,durationMs}]`를 최신순으로 반환합니다. `status`는 ok, cached 또는 고정 오류 코드입니다. 동적 경로는 `/send/batches/:batchKey`로 정규화합니다. 재시작 시 감사 메모리 기록은 초기화되고 배치 이력은 유지됩니다. SC-08에서 보낸 허용 필드 내용을 표시하려면 FE가 로컬에서 보관하며 Relay에 학생 사전을 보내면 안 됩니다.
 
+Search Agent 파싱 실패 건에는 선택 필드 `diagnostic`이 추가됩니다. 예를 들어 `references_array`는 출처 배열, `delta_type`은 본문 조각의 타입, `truncated_frame`은 마지막 SSE 프레임 문제를 가리킵니다. 일반 API 오류 응답은 기존 `{"error":"CODE"}` 형식입니다. 진단을 공유할 때는 해당 감사 이벤트의 `endpoint`, `status`, `diagnostic`만 사용합니다.
+
 | HTTP | 대표 코드 / 처리 |
 | --- | --- |
 | 400 | INVALID_REQUEST, INVALID_JSON, BLOCKED_BY_PRIVACY_POLICY, TEMPLATE_NOT_CONFIGURED |

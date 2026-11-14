@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomTestConfig } from '../config.js';
-import { LinerService,parseSearchSse } from '../providers/liner.js';
+import { LinerSearchError,LinerService,parseSearchSse } from '../providers/liner.js';
 import { ChannelService } from '../providers/channel.js';
 import { ApiError } from '../lib/errors.js';
 import { LinerLimiter,SimpleCache } from '../lib/rate.js';
@@ -65,6 +65,46 @@ test('Search treats HTTP-200 data-error, missing finish/done, invalid JSON and e
     await assert.rejects(provider.nutrition({topicId:'balanced_meals'}),e=>e instanceof ApiError && !e.message.includes('SECRET'));
   });
   assert.throws(()=>parseSearchSse(successSse+'data: {"type":"text-delta","delta":"late"}\n\n'),ApiError);
+});
+
+test('Search accepts CR framing and ignores extra events observed in live Search Agent', async () => {
+  const body = sse([
+    {type:'data-update'},
+    {type:'data-search-decision'},
+    {type:'data-search-tasks'},
+    {type:'data-search-references',data:{references:[
+      {title:'',url:'https://example.invalid/reference'},
+      {title:null,url:null},
+    ]}},
+    {type:'text-delta',delta:'검토'},
+    {type:'data-rich-content'},
+    {type:'text-delta',delta:'할 초안'},
+    {type:'finish'},
+  ]);
+  const provider = new LinerService(live(), async () =>
+    new Response(body.replace(/\n/g, '\r'), {headers:{'content-type':'text/event-stream;charset=UTF-8'}}));
+  const result = await provider.nutrition({topicId:'balanced_meals'});
+  assert.equal(result.text,'검토할 초안');
+  assert.deepEqual(result.citations,[{title:'example.invalid',url:'https://example.invalid/reference'}]);
+});
+
+test('Search reports distinct reasons while rejecting bad fields and truncated frames', () => {
+  const answer = {type:'text-delta',delta:'fixture'};
+  const finish = {type:'finish'};
+  for (const [body, code, diagnostic] of [
+    [sse([{type:'data-search-references',data:null},answer,finish]),'UPSTREAM_INVALID_RESPONSE','references_data'],
+    [sse([{type:'data-search-references',data:{references:{}}},answer,finish]),'LINER_INVALID_RESPONSE','references_array'],
+    [sse([{type:'text-delta',delta:17},finish]),'LINER_INVALID_RESPONSE','delta_type'],
+    [sse([finish,answer]),'LINER_INVALID_RESPONSE','delta_after_finish'],
+    [sse([answer,finish]).trimEnd(),'LINER_INCOMPLETE_STREAM','truncated_frame'],
+    [sse([answer]),'LINER_INCOMPLETE_STREAM','missing_finish'],
+    [sse([answer,finish],false),'LINER_INCOMPLETE_STREAM','missing_done'],
+    [sse([answer,finish],false)+'event: error\ndata: {"message":"PRIVATE"}\n\ndata: [DONE]\n\n',
+      'LINER_STREAM_ERROR','upstream_error'],
+  ]) {
+    assert.throws(() => parseSearchSse(body),
+      error => error instanceof LinerSearchError && error.code === code && error.diagnostic === diagnostic);
+  }
 });
 
 test('upstream 401/429/500, malformed/oversize response and network errors are safe and uncached',async t=>{
