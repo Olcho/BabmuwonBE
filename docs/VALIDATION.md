@@ -11,8 +11,8 @@
 | npm install --ignore-scripts | 개발 의존성 3개 설치, 당시 audit 0 vulnerabilities |
 | npm run check | TypeScript noEmit 통과 |
 | npm run build | TypeScript 컴파일 통과 |
-| npm test | **65 tests, 65 pass, 0 fail, 0 skipped** |
-| npm run smoke | 실제 server 진입점 시작 및 HTTP Mock 검사 통과 |
+| npm test | **67 tests, 67 pass, 0 fail, 0 skipped** |
+| node tools/smoke.mjs | 빌드 후 실제 server 진입점 시작 및 HTTP Mock 검사 통과 |
 | git diff --check | 공백 오류 없음 |
 
 스모크는 별도 임시 상태 저장소와 임의 포트를 사용합니다. health·AI 4종·로컬 승인·Mock 알림톡 요청·동일 배치 409를 확인하고 프로세스를 종료합니다. **외부 API 호출 수는 0**입니다.
@@ -32,10 +32,18 @@
 - 전화번호 원문/로컬 토큰 미저장, 공개 상태에 HMAC 없음, 감사 로그에 민감 본문 없음.
 - Liner 요청 경로/헤더/모델/필드, UTF-8 청크 경계·SSE CRLF·댓글·출처, HTTP 200 data-error, 스트림 잘림, 오류 JSON·401·429·500·오프라인·타임아웃·초대형 응답.
 - AI 캐시/동시 질의 병합, 초당 2회 미만 호출 시작, 오류 미캐시, 비밀정보 echo 차단.
+- Liner 대기열 만료 시 공급자 호출 없이 504 반환, JSON에서 이스케이프되는 자격 증명의 응답 본문·인용 제목 노출 차단.
+- 자동 재시도 3회 소진 후 발송 응답과 배치 조회에서 `retryable:false`, 추가 요청은 409.
 - Channel Talk 최소 payload·/open/v5 경로·auth·event 응답 검사, 명시적 live opt-in 없이 실제 호출 차단.
 - 수동 txt/csv 생성과 기록, 재시작 후 manual 유지, requested/uncertain 대상 자동·수동 재발송 차단.
 
 개인정보 테스트는 이 요청 계약의 차단을 확인합니다. 모든 실학교 이름·재식별 위험에 대한 완전한 보호를 증명하는 테스트가 아닙니다.
+
+## MVP 검증 범위
+
+외부 전송 차단, 인증, 최신 S2 승인, 발송 중복 방지 및 요청·도착 상태 구분을 필수로 유지했습니다. 기존의 짧은 검사는 유지하고, 오류 미캐시 재호출 검증은 대표 429 사례에만 적용했습니다. 401·500은 오류 코드 매핑을 계속 확인합니다.
+
+대규모 부하, 장시간 안정성, 극단적인 장애 복구, 클라우드 다중 서버 검증은 이번 범위에서 제외했습니다. 기존 로컬 재시작 및 짧은 강제 종료 검사는 유지했습니다.
 
 ## 외부 검증 현황
 

@@ -4,7 +4,7 @@ import type { Config } from './config.js';
 import { ApiError } from './lib/errors.js';
 import { authorize,cors,jsonBody,reply } from './lib/http.js';
 import { AuditStore } from './lib/audit.js';
-import { StateStore,type RecipientState } from './lib/state.js';
+import { MAX_SEND_RETRIES,StateStore,type RecipientState } from './lib/state.js';
 import { validateEvidence,validateNews,validateNutrition,validateS5,validateSend,validateDocument,topicMap,type SendInput } from './lib/validation.js';
 import { LinerService } from './providers/liner.js';
 import { ChannelService,type ChannelProvider } from './providers/channel.js';
@@ -53,7 +53,7 @@ export function createApp(config:Config,dependencies:AppDependencies={}) {
         const r=old.recipients.find(x=>x.memberId===entry.memberId);
         if(!r || r.phoneProof!==proof(entry.memberId,entry.phone))throw new ApiError(409,'RECIPIENT_MISMATCH');
         if(r.requestStatus!=='request_failed' || !r.retryable || r.stage!=='upsert_failed')throw new ApiError(409,'RETRY_NOT_ALLOWED');
-        if(r.retryCount>=3)throw new ApiError(409,'MAX_RETRIES_REACHED');
+        if(r.retryCount>=MAX_SEND_RETRIES)throw new ApiError(409,'MAX_RETRIES_REACHED');
       }
       store.update(input.batchKey,b=>{
         for(const entry of input.recipients) {

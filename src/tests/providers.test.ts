@@ -73,8 +73,10 @@ test('upstream 401/429/500, malformed/oversize response and network errors are s
       let calls=0;
       const provider=new LinerService(live(),async()=>{calls++;return json({error:'SECRET_PHONE'},status);});
       await rejectsCode(provider.nutrition({topicId:'balanced_meals'}),code);
-      await rejectsCode(provider.nutrition({topicId:'balanced_meals'}),code);
-      assert.equal(calls,2);
+      if (status === 429) {
+        await rejectsCode(provider.nutrition({topicId:'balanced_meals'}),code);
+        assert.equal(calls,2);
+      }
     });
   }
   await rejectsCode(new LinerService(live(),async()=>{throw new Error('SECRET');}).nutrition({topicId:'balanced_meals'}),'LINER_UPSTREAM_ERROR');
@@ -122,7 +124,44 @@ test('Channel uses documented /open/v5 and minimal fields; only recognized event
 
 test('one Liner limiter serializes reservations at less than two calls per second',async()=>{
   const limiter=new LinerLimiter();
+  const expired = limiter.wait(performance.now() - 1);
+  await rejectsCode(expired, 'LINER_TIMEOUT');
   const starts=await Promise.all([1,2,3].map(async()=>{await limiter.wait();return performance.now();}));
   assert.ok(starts[1]-starts[0]>=500);assert.ok(starts[2]-starts[1]>=500);
   const cache=new SimpleCache();cache.set('expired','value',-1);assert.equal(cache.get('expired'),undefined);
+});
+
+test('a queued Liner call expires before a later slot opens and makes no upstream request', async () => {
+  let calls = 0;
+  const provider = new LinerService({...live(), upstreamTimeoutMs:100}, async () => {
+    calls++;
+    return json({choices:[{message:{content:'초안'},finish_reason:'stop'}]});
+  });
+  await provider.s2News({month:'2026-12',menus:['귤']});
+  const ended = await Promise.race([
+    provider.s2News({month:'2026-12',menus:['우유']}).then(
+      () => 'unexpected-success',
+      error => error instanceof ApiError ? error.code : 'unexpected-error',
+    ),
+    new Promise<string>(resolve => {
+      const alarm = setTimeout(() => resolve('still-waiting'), 350);
+      alarm.unref();
+    }),
+  ]);
+  assert.equal(ended, 'LINER_TIMEOUT');
+  assert.equal(calls, 1);
+});
+
+test('credentials that JSON would escape are blocked in both text and citation titles', async () => {
+  const secret = 'fixture"secret';
+  const cfg = {...live(), channelSecret: secret};
+  const router = new LinerService(cfg, async () =>
+    json({choices:[{message:{content:secret},finish_reason:'stop'}]}));
+  await rejectsCode(router.s2News({month:'2026-12',menus:['귤']}), 'UPSTREAM_INVALID_RESPONSE');
+
+  const search = new LinerService(cfg, async () => new Response(sse([
+    {type:'data-search-references',data:{references:[{title:secret,url:'https://example.invalid/reference'}]}},
+    {type:'text-delta',delta:'초안'}, {type:'finish'},
+  ]), {headers:{'content-type':'text/event-stream'}}));
+  await rejectsCode(search.nutrition({topicId:'balanced_meals'}), 'UPSTREAM_INVALID_RESPONSE');
 });

@@ -158,8 +158,13 @@ test('partial upsert failure retries only failed recipients, retains history and
     for(let n=1;n<=3;n++){
       const r=await h.post('/send/alimtalk/retry',retry);assert.equal(r.status,202);
       const value=await r.json();assert.equal(value.recipients[1].retryCount,n);assert.equal(value.recipients[1].attempts.length,n+1);
+      assert.equal(value.recipients[1].retryable,n<3);
     }
-    assert.equal((await h.post('/send/alimtalk/retry',retry)).status,409);
+    const exhausted=await h.post('/send/alimtalk/retry',retry);
+    assert.equal(exhausted.status,409);
+    assert.deepEqual(await exhausted.json(),{error:'MAX_RETRIES_REACHED'});
+    const saved=await (await h.get('/send/batches/'+input.batchKey)).json();
+    assert.equal(saved.recipients[1].retryable,false);
     assert.equal(events,1);assert.equal(upserts,5);
   } finally {await h.close();}
 });

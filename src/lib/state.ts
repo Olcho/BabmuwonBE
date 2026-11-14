@@ -5,6 +5,7 @@ import { ApiError } from './errors.js';
 import { validateDocument, type DocumentState } from './validation.js';
 
 export type RequestStatus = 'pending' | 'requested' | 'request_failed';
+export const MAX_SEND_RETRIES = 3;
 export type Stage = 'reserved' | 'upsert' | 'event' | 'requested' | 'upsert_failed' | 'uncertain' | 'manual';
 export interface Attempt { at:string; finishedAt?:string; stage:Stage; errorCode?:string }
 export interface RecipientState {
@@ -42,7 +43,7 @@ export class StateStore {
           for(const r of b.recipients) if(!r || !stages.includes(r.stage)
             || !['pending','requested','request_failed'].includes(r.requestStatus) || r.deliveryStatus!=='unknown'
             || !/^[0-9a-f-]{36}$/.test(r.memberId) || !/^[0-9a-f]{64}$/.test(r.phoneProof)
-            || !Number.isInteger(r.retryCount) || r.retryCount<0 || r.retryCount>3
+            || !Number.isInteger(r.retryCount) || r.retryCount<0 || r.retryCount>MAX_SEND_RETRIES
             || !Array.isArray(r.attempts) || !r.attempts.length || typeof r.retryable!=='boolean') throw new Error();
         }
         this.state=db;
@@ -145,7 +146,9 @@ export class StateStore {
     const correctionNeeded=!!d && (!d.approved || !d.planConfirmed || d.docVersion!==b.docVersion || d.basedOnPlanVersion!==d.planVersion);
     return {
       batchKey:b.batchKey,month:b.month,simulated:b.simulated,status:b.status,createdAt:b.createdAt,correctionNeeded,
-      recipients:b.recipients.map(({phoneProof:_,...r})=>r),
+      recipients:b.recipients.map(({phoneProof:_,...r})=>({
+        ...r, retryable: r.retryable && r.retryCount < MAX_SEND_RETRIES,
+      })),
       totals:{count:b.recipients.length,requested:b.recipients.filter(r=>r.requestStatus==='requested').length,
         failed:b.recipients.filter(r=>r.requestStatus==='request_failed').length,
         uncertain:b.recipients.filter(r=>r.stage==='uncertain').length,delivered:0},

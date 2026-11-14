@@ -61,9 +61,9 @@ export class LinerService {
   private pending=new Map<string,Promise<AIResult>>();
   constructor(private readonly cfg:Config,private readonly fetcher:Fetch=fetch) {}
   private async call(path:string,body:unknown) {
-    const deadline=Date.now()+this.cfg.upstreamTimeoutMs;
-    await this.limiter.wait();
-    const remaining=deadline-Date.now();
+    const deadline=performance.now()+this.cfg.upstreamTimeoutMs;
+    await this.limiter.wait(deadline);
+    const remaining=deadline-performance.now();
     if(remaining<=0)throw new ApiError(504,'LINER_TIMEOUT');
     return upstream(this.fetcher,'https://platform.liner.com'+path,{'x-api-key':this.cfg.linerKey},
       'POST',body,remaining,'LINER');
@@ -110,8 +110,9 @@ export class LinerService {
     if(this.pending.size>=32)throw new ApiError(429,'RELAY_BUSY');
     const promise=run().then(value=>{
       // Never echo server credentials, including malicious/upstream diagnostic output.
-      const encoded=JSON.stringify(value);
-      if([this.cfg.linerKey,this.cfg.channelKey,this.cfg.channelSecret,this.cfg.relayAuthToken].some(secret=>secret && encoded.includes(secret)))
+      const responseFields = [value.text, ...value.citations.flatMap(({title,url}) => [title,url])];
+      if([this.cfg.linerKey,this.cfg.channelKey,this.cfg.channelSecret,this.cfg.relayAuthToken]
+        .some(secret => secret && responseFields.some(field => field.includes(secret))))
         throw new ApiError(502,'UPSTREAM_INVALID_RESPONSE');
       this.cache.set(key,value);return value;
     });
