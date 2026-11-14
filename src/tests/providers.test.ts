@@ -6,13 +6,15 @@ import { ChannelService } from '../providers/channel.js';
 import { ApiError } from '../lib/errors.js';
 import { LinerLimiter,SimpleCache } from '../lib/rate.js';
 import type { Fetch } from '../lib/upstream.js';
+import { citationReviewMessage } from '../lib/search-citations.js';
 
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
 const sse=(events:unknown[],done=true)=>events.map(e=>'event: data\ndata: '+JSON.stringify(e)+'\n\n').join('')+(done?'data: [DONE]\n\n':'');
+const referenceUrl = 'https://fixtures.mawd-demo.kr/reference';
 const successSse=sse([
   {type:'start'},{type:'data-search-references',data:{references:[
-    {title:'Fixture reference',url:'https://example.invalid/reference'},
-    {title:'unsafe',url:'javascript:alert(1)'},{url:'https://user:pass@example.invalid'},
+    {title:'Fixture reference',url:referenceUrl},
+    {title:'unsafe',url:'javascript:alert(1)'},{url:'https://user:pass@fixtures.mawd-demo.kr'},
   ]}},
   {type:'text-delta',delta:'검토가 필요한 초안'},{type:'text-end'},{type:'finish'},
 ]);
@@ -48,8 +50,8 @@ test('Search sends stream=true; split UTF-8 chunks, CRLF, comments and safe cita
     }}),{headers:{'content-type':'text/event-stream'}});
   });
   const result=await provider.nutrition({topicId:'balanced_meals'});
-  assert.equal(result.text,'검토가 필요한 초안');assert.equal(result.citations.length,1);
-  assert.equal(result.sourceMissing,false);assert.equal(result.simulated,false);
+  assert.equal(result.text,'검토가 필요한 초안\n\n'+citationReviewMessage);assert.equal(result.citations.length,1);
+  assert.equal(result.sourceMissing,true);assert.equal(result.simulated,false);
 });
 
 test('Search treats HTTP-200 data-error, missing finish/done, invalid JSON and empty answer as errors',async t=>{
@@ -73,7 +75,7 @@ test('Search accepts CR framing and ignores extra events observed in live Search
     {type:'data-search-decision'},
     {type:'data-search-tasks'},
     {type:'data-search-references',data:{references:[
-      {title:'',url:'https://example.invalid/reference'},
+      {title:'',url:referenceUrl},
       {title:null,url:null},
     ]}},
     {type:'text-delta',delta:'검토'},
@@ -84,8 +86,8 @@ test('Search accepts CR framing and ignores extra events observed in live Search
   const provider = new LinerService(live(), async () =>
     new Response(body.replace(/\n/g, '\r'), {headers:{'content-type':'text/event-stream;charset=UTF-8'}}));
   const result = await provider.nutrition({topicId:'balanced_meals'});
-  assert.equal(result.text,'검토할 초안');
-  assert.deepEqual(result.citations,[{title:'example.invalid',url:'https://example.invalid/reference'}]);
+  assert.equal(result.text,'검토할 초안\n\n'+citationReviewMessage);
+  assert.deepEqual(result.citations,[{title:'fixtures.mawd-demo.kr',url:referenceUrl}]);
 });
 
 test('Search accepts observed scholarly metadata followed by reference results', () => {
@@ -93,15 +95,53 @@ test('Search accepts observed scholarly metadata followed by reference results',
     const result = parseSearchSse(sse([
       {type:'data-search-references',data:{isScholarlyQuery}},
       {type:'data-search-references',data:{references:[
-        {title:'Fixture reference',url:'https://example.invalid/reference'},
+        {title:'Fixture reference',url:referenceUrl},
       ],relatedImages:[]}},
-      {type:'text-delta',delta:'검토할 초안'},
+      {type:'text-delta',delta:'검토할 초안 '+referenceUrl},
       {type:'finish'},
     ]));
-    assert.equal(result.text,'검토할 초안');
-    assert.deepEqual(result.citations,[{title:'Fixture reference',url:'https://example.invalid/reference'}]);
+    assert.equal(result.text,'검토할 초안 '+referenceUrl);
+    assert.deepEqual(result.citations,[{title:'Fixture reference',url:referenceUrl}]);
     assert.equal(result.sourceMissing,false);
   }
+});
+
+test('Search resolves both inline number formats through chunk IDs and retains references beyond the old cap', () => {
+  const references = Array.from({length:23}, (_,i)=>({title:`자료 ${i+1}`,url:`${referenceUrl}/${i+1}`}));
+  const referenceChunks = references.map(({url},i)=>({num:23-i,sourceUrl:url}));
+  const answer = '[1] ((2, 3)) '+ Array.from({length:20},(_,i)=>`[${i+4}]`).join(' ');
+  const result = parseSearchSse(sse([
+    {type:'data-search-references',data:{references}},
+    {type:'data-search-chunks',data:{referenceChunks}},
+    {type:'text-delta',delta:answer}, {type:'finish'},
+  ]));
+  assert.equal(result.citations.length,23);
+  assert.equal(result.citations[0].url,references[22].url);
+  assert.ok(result.text.startsWith(`[1](<${references[22].url}>) [2](<${references[21].url}>) [3](<${references[20].url}>)`));
+  assert.equal(result.sourceMissing,false);
+  assert.equal(result.reviewRequired,true);
+});
+
+test('Search flags missing, conflicting, empty and placeholder citations without discarding valid links', () => {
+  const otherUrl = `${referenceUrl}/other`;
+  const inventedUrl = `${referenceUrl}/invented`;
+  const result = parseSearchSse(sse([
+    {type:'data-search-references',data:{references:[{url:referenceUrl},{url:otherUrl},{url:''},{url:'https://example.com/cite'}]}},
+    {type:'data-search-chunks',data:{referenceChunks:[
+      {num:1,sourceUrl:referenceUrl},{num:1,sourceUrl:otherUrl},{num:3,sourceUrl:inventedUrl},
+      {num:4,sourceUrl:otherUrl},
+    ]}},
+    {type:'text-delta',delta:`[1] [2] ((3)) [4](${referenceUrl}) [빈 출처]() [예시](https://example.com/cite) ${inventedUrl} [실제](<${referenceUrl}>)`},
+    {type:'finish'},
+  ]));
+  assert.ok(result.text.includes(`[실제](<${referenceUrl}>)`));
+  for (const warning of ['출처 미연결','빈 링크','예시 링크']) assert.ok(result.text.includes(`〔${warning}〕`));
+  assert.ok(!result.text.includes(inventedUrl));
+  assert.ok(!result.text.includes('https://example.com'));
+  assert.deepEqual(result.citations.map(ref=>ref.url),[referenceUrl,otherUrl]);
+  assert.equal(result.sourceMissing,true);
+  assert.equal(result.reviewRequired,true);
+  assert.ok(result.text.endsWith(citationReviewMessage));
 });
 
 test('Search metadata exception does not bypass reference validation', () => {
@@ -232,7 +272,7 @@ test('credentials that JSON would escape are blocked in both text and citation t
   await rejectsCode(router.s2News({month:'2026-12',menus:['귤']}), 'UPSTREAM_INVALID_RESPONSE');
 
   const search = new LinerService(cfg, async () => new Response(sse([
-    {type:'data-search-references',data:{references:[{title:secret,url:'https://example.invalid/reference'}]}},
+    {type:'data-search-references',data:{references:[{title:secret,url:referenceUrl}]}},
     {type:'text-delta',delta:'초안'}, {type:'finish'},
   ]), {headers:{'content-type':'text/event-stream'}}));
   await rejectsCode(search.nutrition({topicId:'balanced_meals'}), 'UPSTREAM_INVALID_RESPONSE');
