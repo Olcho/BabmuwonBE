@@ -1,0 +1,20 @@
+{
+  "name": "mawd-relay-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MAWD v0.3 local relay for Liner and Channel Talk",
+  "engines": {"node": ">=22"},
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "npm run build && npm start",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "smoke": "npm run build && node tools/smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0"
+  }
+}
